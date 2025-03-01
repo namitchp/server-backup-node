@@ -20,7 +20,6 @@ const server = http.createServer((req, res) => {
     }
 });
 
-
 const s3Client = new S3Client({ region: 'your-region' });
 
 // Function to upload a file to S3 using multipart upload
