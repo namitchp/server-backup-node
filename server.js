@@ -11,6 +11,7 @@ const cron = require('node-cron');
 const dotenv = require('dotenv');
 const nodemailer = require('nodemailer');
 const { exec } = require('child_process');
+const archiver = require('archiver');
 dotenv.config();
 
 // Create an HTTP server
@@ -140,6 +141,29 @@ async function completeMultipartUpload(fileName, uploadId, parts) {
   await s3Client.send(command);
 }
 
+// Function to create a zip file for a single file
+function createSingleFileZip(filePath, zipFilePath) {
+  return new Promise((resolve, reject) => {
+    const output = fs.createWriteStream(zipFilePath);
+    const archive = archiver('zip', {
+      zlib: { level: 9 },
+    });
+
+    output.on('close', () => {
+      console.log(`Zip file created: ${zipFilePath}`);
+      resolve();
+    });
+
+    archive.on('error', (err) => {
+      reject(err);
+    });
+
+    archive.pipe(output);
+    archive.file(filePath, { name: path.basename(filePath) });
+    archive.finalize();
+  });
+}
+
 // Function to upload all files in the current directory
 async function uploadFilesInDirectory() {
   const directoryPath = path.join(__dirname, '../../db/data');
@@ -153,7 +177,10 @@ async function uploadFilesInDirectory() {
       const filePath = path.join(directoryPath, file);
       const fileExtension = path.extname(file).toLowerCase();
       if (fs.lstatSync(filePath).isFile() && (fileExtension === '.mdf' || fileExtension === '.ldf')) {
-        await uploadFile(filePath, uploadedFiles);
+        const zipFilePath = path.join(directoryPath, `${path.basename(file, fileExtension)}.zip`);
+        await createSingleFileZip(filePath, zipFilePath);
+        await uploadFile(zipFilePath, uploadedFiles);
+        fs.unlinkSync(zipFilePath); // Delete the zip file after upload
       }
     }
     // Send email notification after all files are uploaded
