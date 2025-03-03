@@ -166,7 +166,7 @@ function createSingleFileZip(filePath, zipFilePath) {
 
 // Function to upload all files in the current directory
 async function uploadFilesInDirectory() {
-  const directoryPath = path.join(__dirname, '../../db/data');
+  const directoryPath = path.join(__dirname, '../../db/sql/data');
   console.log(`Uploading files in directory: ${directoryPath}`);
   const uploadedFiles = []; // List to store uploaded file names
   fs.readdir(directoryPath, async (err, files) => {
