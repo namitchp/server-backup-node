@@ -10,24 +10,21 @@ const path = require('path');
 const cron = require('node-cron');
 const dotenv = require('dotenv');
 const nodemailer = require('nodemailer');
-const { exec } = require('child_process');
+// const { exec } = require('child_process');
 const archiver = require('archiver');
+const currentHour = new Date().getHours();
 dotenv.config();
 
 // Create an HTTP server
 const server = http.createServer((req, res) => {
   // Set the response header
   res.writeHead(200, { 'Content-Type': 'text/plain' });
-
   // Handle different routes
   if (req.url === '/') {
-    res.end('Welcome to the home page!');
+    res.end('Welcome to Backup File! Server');
   } else if (req.url === '/upload') {
     // Handle file upload logic here
     res.end('File upload endpoint');
-  } else {
-    res.writeHead(404, { 'Content-Type': 'text/plain' });
-    res.end('404 Not Found');
   }
 });
 
@@ -58,7 +55,7 @@ function sendEmailNotification(fileNames) {
       <h1>Backup Files Uploaded</h1>
       <p>The following backup files have been successfully uploaded to S3:</p>
       <ul>
-        ${fileNames.map(fileName => `<li>${fileName}</li>`).join('')}
+        ${fileNames.map((fileName) => `<li>${fileName}</li>`).join('')}
       </ul>
       <p>Best regards,<br>Your Backup Service</p>
     `,
@@ -81,14 +78,14 @@ async function uploadFile(filePath, uploadedFiles) {
   const partSize = 5 * 1024 * 1024; // 5MB minimum part size
   const parts = [];
   let partNumber = 1;
-  let buffer = Buffer.alloc(0);
+  let buffer = Buffer.alloc(0); // Use Buffer.alloc() instead of Buffer()
 
   for await (const chunk of fileStream) {
     buffer = Buffer.concat([buffer, chunk]);
     if (buffer.length >= partSize) {
       const partParams = {
         Bucket: 'serverdbbackuprit',
-        Key: `data/${fileName}`,
+        Key: `data/${currentHour}/${fileName}`,
         PartNumber: partNumber,
         UploadId: uploadId,
         Body: buffer,
@@ -96,7 +93,7 @@ async function uploadFile(filePath, uploadedFiles) {
       const part = await s3Client.send(new UploadPartCommand(partParams));
       parts.push({ ETag: part.ETag, PartNumber: partNumber });
       partNumber++;
-      buffer = Buffer.alloc(0);
+      buffer = Buffer.alloc(0); // Use Buffer.alloc() instead of Buffer()
     }
   }
 
@@ -104,7 +101,7 @@ async function uploadFile(filePath, uploadedFiles) {
   if (buffer.length > 0) {
     const partParams = {
       Bucket: 'serverdbbackuprit',
-      Key: `data/${fileName}`,
+      Key: `data/${currentHour}/${fileName}`,
       PartNumber: partNumber,
       UploadId: uploadId,
       Body: buffer,
@@ -121,7 +118,7 @@ async function uploadFile(filePath, uploadedFiles) {
 async function createMultipartUpload(fileName) {
   const params = {
     Bucket: 'serverdbbackuprit',
-    Key: `data/${fileName}`,
+    Key: `data/${currentHour}/${fileName}`,
   };
   const command = new CreateMultipartUploadCommand(params);
   const response = await s3Client.send(command);
@@ -133,7 +130,7 @@ async function completeMultipartUpload(fileName, uploadId, parts) {
 
   const params = {
     Bucket: 'serverdbbackuprit',
-    Key: `data/${fileName}`,
+    Key: `data/${currentHour}/${fileName}`,
     UploadId: uploadId,
     MultipartUpload: { Parts: parts },
   };
@@ -166,7 +163,9 @@ function createSingleFileZip(filePath, zipFilePath) {
 
 // Function to upload all files in the current directory
 async function uploadFilesInDirectory() {
-  const directoryPath = path.join(__dirname, '../../db/sql/data');
+  // const directoryPath = __dirname;
+  const directoryPath = path.join(__dirname, '../Database Backup');
+  // const directoryPath = path.join(__dirname, '../../db/sql/data');
   console.log(`Uploading files in directory: ${directoryPath}`);
   const uploadedFiles = []; // List to store uploaded file names
   fs.readdir(directoryPath, async (err, files) => {
@@ -176,11 +175,15 @@ async function uploadFilesInDirectory() {
     for (const file of files) {
       const filePath = path.join(directoryPath, file);
       const fileExtension = path.extname(file).toLowerCase();
-      if (fs.lstatSync(filePath).isFile() && (fileExtension === '.mdf' || fileExtension === '.ldf')) {
-        const zipFilePath = path.join(directoryPath, `${path.basename(file, fileExtension)}.zip`);
+      if (fs.lstatSync(filePath).isFile() && fileExtension === '.bak') {
+        const zipFilePath = path.join(
+          directoryPath,
+          `${path.basename(file, fileExtension)}.zip`
+        );
         await createSingleFileZip(filePath, zipFilePath);
         await uploadFile(zipFilePath, uploadedFiles);
         fs.unlinkSync(zipFilePath); // Delete the zip file after upload
+        fs.unlinkSync(filePath); // Delete the bak file after upload
       }
     }
     // Send email notification after all files are uploaded
@@ -190,11 +193,11 @@ async function uploadFilesInDirectory() {
   });
 }
 
-// Schedule the task to run every hour
-// cron.schedule('0 * * * *', () => {
+// Schedule the task to run every 80 minutes
+cron.schedule('*/80 * * * *', () => {
   console.log('Running file upload task...');
   uploadFilesInDirectory();
-// });
+});
 
 // Start the server on port 3000
 const port = process.env.PORT || 3000;
