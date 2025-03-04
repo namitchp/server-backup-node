@@ -50,14 +50,36 @@ function sendEmailNotification(fileNames) {
   const mailOptions = {
     from: process.env.EMAIL_USER,
     to: process.env.NOTIFICATION_EMAIL,
+    cc: process.env.CCEMAIL_USER,
     subject: 'Backup Files Uploaded',
     html: `
-      <h1>Backup Files Uploaded</h1>
-      <p>The following backup files have been successfully uploaded to S3:</p>
-      <ul>
-        ${fileNames.map((fileName) => `<li>${fileName}</li>`).join('')}
-      </ul>
-      <p>Best regards,<br>Your Backup Service</p>
+      <div style="font-family: Arial, sans-serif; color: #333;">
+        <h1 style="color: #4CAF50;">Backup Files Uploaded</h1>
+        <p>The following backup files have been successfully uploaded to S3:</p>
+        <table style="border-collapse: collapse; width: 100%;">
+          <thead>
+            <tr style="background-color: #f2f2f2;">
+              <th style="border: 1px solid #ddd; padding: 8px;">#</th>
+              <th style="border: 1px solid #ddd; padding: 8px;">File Name</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${fileNames
+              .map(
+                (fileName, index) => `
+              <tr>
+                <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${
+                  index + 1
+                }</td>
+                <td style="border: 1px solid #ddd; padding: 8px;">${fileName}</td>
+              </tr>
+            `
+              )
+              .join('')}
+          </tbody>
+        </table>
+        <p style="margin-top: 20px;">Best regards,<br>Your Backup Service</p>
+      </div>
     `,
   };
 
@@ -66,11 +88,14 @@ function sendEmailNotification(fileNames) {
       return console.error(`Error sending email: ${error.message}`);
     }
     console.log(`Email sent: ${info.response}`);
+    uploadedFiles = []; // Clear the uploadedFiles array after sending the email
   });
 }
 
+let uploadedFiles = []; // List to store uploaded file names globally
+
 // Function to upload a file to S3 using multipart upload
-async function uploadFile(filePath, uploadedFiles) {
+async function uploadFile(filePath) {
   const fileStream = fs.createReadStream(filePath);
   const fileName = path.basename(filePath);
   console.log(`Uploading file: ${fileName}`);
@@ -163,11 +188,10 @@ function createSingleFileZip(filePath, zipFilePath) {
 
 // Function to upload all files in the current directory
 async function uploadFilesInDirectory() {
-  // const directoryPath = __dirname;
-  const directoryPath = path.join(__dirname, '../Database Backup');
+  const directoryPath = __dirname;
+  // const directoryPath = path.join(__dirname, '../Database Backup');
   // const directoryPath = path.join(__dirname, '../../db/sql/data');
-  console.log(`Uploading files in directory: ${directoryPath}`);
-  const uploadedFiles = []; // List to store uploaded file names
+  // console.log(`Uploading files in directory: ${directoryPath}`);
   fs.readdir(directoryPath, async (err, files) => {
     if (err) {
       return console.error(`Unable to scan directory: ${err.message}`);
@@ -180,8 +204,14 @@ async function uploadFilesInDirectory() {
           directoryPath,
           `${path.basename(file, fileExtension)}.zip`
         );
+
+        // Check if the zip file already exists and delete it
+        if (fs.existsSync(zipFilePath)) {
+          fs.unlinkSync(zipFilePath);
+        }
+
         await createSingleFileZip(filePath, zipFilePath);
-        await uploadFile(zipFilePath, uploadedFiles);
+        await uploadFile(zipFilePath);
         fs.unlinkSync(zipFilePath); // Delete the zip file after upload
         fs.unlinkSync(filePath); // Delete the bak file after upload
       }
@@ -194,8 +224,11 @@ async function uploadFilesInDirectory() {
 }
 
 // Schedule the task to run every 80 minutes
-cron.schedule('*/80 * * * *', () => {
-  console.log('Running file upload task...');
+cron.schedule('* * * * *', () => {
+  if (uploadedFiles.length > 0) {
+    console.log('Files have already been uploaded. Skipping upload.');
+    return;
+  }
   uploadFilesInDirectory();
 });
 
