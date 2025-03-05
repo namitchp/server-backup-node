@@ -11,6 +11,7 @@ const cron = require('node-cron');
 const dotenv = require('dotenv');
 const nodemailer = require('nodemailer');
 const archiver = require('archiver');
+const currentHour = new Date().getHours();
 dotenv.config();
 
 // Create an HTTP server
@@ -173,7 +174,6 @@ function createDirectoryZip(directoryPath, zipFilePath) {
 // Function to upload all files in the current directory
 async function uploadFilesInDirectory() {
   running = true;
-  const currentHour = new Date().getHours();
   // const directoryPath = path.join(__dirname, '../Database Backup');
   const directoryPath = path.join(__dirname, '../../db/sql/data');
   const zipFilePath = path.join(directoryPath, `../backup_${currentHour}.zip`);
