@@ -97,7 +97,7 @@ async function uploadFile(filePath) {
     buffer = Buffer.concat([buffer, chunk]);
     if (buffer.length >= partSize) {
       const partParams = {
-        Bucket: 'serverdbbackuprit',
+        Bucket: process.env.AWS_BUCKET_NAME,
         Key: `data/${fileName}`,
         PartNumber: partNumber,
         UploadId: uploadId,
@@ -113,7 +113,7 @@ async function uploadFile(filePath) {
   // Upload the last part if it exists
   if (buffer.length > 0) {
     const partParams = {
-      Bucket: 'serverdbbackuprit',
+      Bucket: process.env.AWS_BUCKET_NAME,
       Key: `data/${fileName}`,
       PartNumber: partNumber,
       UploadId: uploadId,
@@ -129,7 +129,7 @@ async function uploadFile(filePath) {
 
 async function createMultipartUpload(fileName) {
   const params = {
-    Bucket: 'serverdbbackuprit',
+    Bucket: process.env.AWS_BUCKET_NAME,
     Key: `data/${fileName}`,
   };
   const command = new CreateMultipartUploadCommand(params);
@@ -140,7 +140,7 @@ async function completeMultipartUpload(fileName, uploadId, parts) {
   console.log(`Completing multipart upload for file: ${fileName}`);
 
   const params = {
-    Bucket: 'serverdbbackuprit',
+    Bucket: process.env.AWS_BUCKET_NAME,
     Key: `data/${fileName}`,
     UploadId: uploadId,
     MultipartUpload: { Parts: parts },
@@ -174,7 +174,8 @@ function createDirectoryZip(directoryPath, zipFilePath) {
 // Function to upload all files in the current directory
 async function uploadFilesInDirectory() {
   running = true;
-  const directoryPath = path.join(__dirname, '../Database Backup');
+  // const directoryPath = path.join(__dirname, '../Database Backup');
+  const directoryPath = path.join(__dirname, '../../db/sql/data');
   const zipFilePath = path.join(directoryPath, `../backup_${currentHour}.zip`);
 
   // Check if the directory has files
@@ -208,7 +209,7 @@ async function uploadFilesInDirectory() {
 }
 
 // Schedule the task to run every 80 minutes
-cron.schedule('*/40 * * * *', () => {
+cron.schedule('* * * * *', () => {
   if (running) {
     console.log('Files have already been uploaded. Skipping upload.');
     return;
