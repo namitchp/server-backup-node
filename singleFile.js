@@ -10,8 +10,11 @@ const path = require('path');
 const cron = require('node-cron');
 const dotenv = require('dotenv');
 const nodemailer = require('nodemailer');
+// const { exec } = require('child_process');
 const archiver = require('archiver');
+const currentHour = new Date().getHours();
 dotenv.config();
+
 // Create an HTTP server
 const server = http.createServer((req, res) => {
   // Set the response header
@@ -24,6 +27,7 @@ const server = http.createServer((req, res) => {
     res.end('File upload endpoint');
   }
 });
+
 const s3Client = new S3Client({
   region: 'ap-south-1',
   credentials: {
@@ -31,6 +35,7 @@ const s3Client = new S3Client({
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
   },
 });
+
 // Configure nodemailer
 const transporter = nodemailer.createTransport({
   service: 'gmail',
@@ -39,9 +44,9 @@ const transporter = nodemailer.createTransport({
     pass: process.env.EMAIL_PASS,
   },
 });
-let uploadedFiles = []; // List to store uploaded file names globally
+
 // Function to send email notification
-function sendEmailNotification() {
+function sendEmailNotification(fileNames) {
   const currentDateTime = new Date().toLocaleString();
   const mailOptions = {
     from: process.env.EMAIL_USER,
@@ -51,7 +56,7 @@ function sendEmailNotification() {
     html: `
       <div style="font-family: Arial, sans-serif; color: #333;">
         <h1 style="color: #4CAF50;">Backup Files Uploaded</h1>
-        <p>The following backup files have been successfully uploaded to S3 in the last 8 hours:</p>
+        <p>The following backup files have been successfully uploaded to S3:</p>
         <table style="border-collapse: collapse; width: 100%;">
           <thead>
             <tr style="background-color: #f2f2f2;">
@@ -60,7 +65,7 @@ function sendEmailNotification() {
             </tr>
           </thead>
           <tbody>
-            ${uploadedFiles
+            ${fileNames
               .map(
                 (fileName, index) => `
               <tr>
@@ -88,7 +93,8 @@ function sendEmailNotification() {
   });
 }
 
-let running = false;
+let uploadedFiles = []; // List to store uploaded file names globally
+
 // Function to upload a file to S3 using multipart upload
 async function uploadFile(filePath) {
   const fileStream = fs.createReadStream(filePath);
@@ -104,8 +110,8 @@ async function uploadFile(filePath) {
     buffer = Buffer.concat([buffer, chunk]);
     if (buffer.length >= partSize) {
       const partParams = {
-        Bucket: process.env.AWS_BUCKET_NAME,
-        Key: `data/${fileName}`,
+        Bucket: 'serverdbbackuprit',
+        Key: `data/${currentHour}/${fileName}`,
         PartNumber: partNumber,
         UploadId: uploadId,
         Body: buffer,
@@ -120,8 +126,8 @@ async function uploadFile(filePath) {
   // Upload the last part if it exists
   if (buffer.length > 0) {
     const partParams = {
-      Bucket: process.env.AWS_BUCKET_NAME,
-      Key: `data/${fileName}`,
+      Bucket: 'serverdbbackuprit',
+      Key: `data/${currentHour}/${fileName}`,
       PartNumber: partNumber,
       UploadId: uploadId,
       Body: buffer,
@@ -132,32 +138,34 @@ async function uploadFile(filePath) {
 
   await completeMultipartUpload(fileName, uploadId, parts);
   console.log(`File uploaded successfully: ${fileName}`);
+  uploadedFiles.push(fileName); // Add file name to the list
 }
 
 async function createMultipartUpload(fileName) {
   const params = {
-    Bucket: process.env.AWS_BUCKET_NAME,
-    Key: `data/${fileName}`,
+    Bucket: 'serverdbbackuprit',
+    Key: `data/${currentHour}/${fileName}`,
   };
   const command = new CreateMultipartUploadCommand(params);
   const response = await s3Client.send(command);
   return response.UploadId;
 }
+
 async function completeMultipartUpload(fileName, uploadId, parts) {
   console.log(`Completing multipart upload for file: ${fileName}`);
 
   const params = {
-    Bucket: process.env.AWS_BUCKET_NAME,
-    Key: `data/${fileName}`,
+    Bucket: 'serverdbbackuprit',
+    Key: `data/${currentHour}/${fileName}`,
     UploadId: uploadId,
     MultipartUpload: { Parts: parts },
   };
   const command = new CompleteMultipartUploadCommand(params);
   await s3Client.send(command);
 }
+
 // Function to create a zip file for a single file
-// Function to create a zip file for the entire directory
-function createDirectoryZip(directoryPath, zipFilePath) {
+function createSingleFileZip(filePath, zipFilePath) {
   return new Promise((resolve, reject) => {
     const output = fs.createWriteStream(zipFilePath);
     const archive = archiver('zip', {
@@ -172,62 +180,53 @@ function createDirectoryZip(directoryPath, zipFilePath) {
     archive.on('error', (err) => {
       reject(err);
     });
+
     archive.pipe(output);
-    archive.directory(directoryPath, false);
+    archive.file(filePath, { name: path.basename(filePath) });
     archive.finalize();
   });
 }
 
 // Function to upload all files in the current directory
 async function uploadFilesInDirectory() {
-  running = true;
-  const currentHour = new Date().getHours();
-  const directoryPath = path.join(__dirname, '../Database Backup');
+  const directoryPath = __dirname;
+  // const directoryPath = path.join(__dirname, '../Database Backup');
   // const directoryPath = path.join(__dirname, '../../db/sql/data');
-  const zipFilePath = path.join(directoryPath, `../backup_${currentHour}.zip`);
-
-  // Check if the directory has files
-  const files = fs.readdirSync(directoryPath);
-  if (files.length === 0) {
-    console.log('No files to upload. Skipping upload.');
-    running = false;
-    return;
-  }
-
-  // Check if the zip file already exists and delete it
-  if (fs.existsSync(zipFilePath)) {
-    fs.unlinkSync(zipFilePath);
-  }
-
-  await createDirectoryZip(directoryPath, zipFilePath);
-  await uploadFile(zipFilePath);
-  fs.unlinkSync(zipFilePath); // Delete the zip file after upload
-
-  // Delete all files in the current directory
-  for (const file of files) {
-    const filePath = path.join(directoryPath, file);
-    if (fs.lstatSync(filePath).isFile()) {
-      fs.unlinkSync(filePath);
+  // console.log(`Uploading files in directory: ${directoryPath}`);
+  fs.readdir(directoryPath, async (err, files) => {
+    if (err) {
+      return console.error(`Unable to scan directory: ${err.message}`);
     }
-  }
-  console.log(`All files in the directory deleted: ${directoryPath}`);
+    for (const file of files) {
+      const filePath = path.join(directoryPath, file);
+      const fileExtension = path.extname(file).toLowerCase();
+      if (fs.lstatSync(filePath).isFile() && fileExtension === '.bak') {
+        const zipFilePath = path.join(
+          directoryPath,
+          `${path.basename(file, fileExtension)}.zip`
+        );
 
-  uploadedFiles.push(path.basename(zipFilePath)); // Add file name to the list
-  running = false;
-  if (
-    currentHour === 8 ||
-    currentHour === 13 ||
-    currentHour === 17 ||
-    currentHour === 20 ||
-    currentHour === 23
-  ) {
-    sendEmailNotification();
-  }
+        // Check if the zip file already exists and delete it
+        if (fs.existsSync(zipFilePath)) {
+          fs.unlinkSync(zipFilePath);
+        }
+
+        await createSingleFileZip(filePath, zipFilePath);
+        await uploadFile(zipFilePath);
+        fs.unlinkSync(zipFilePath); // Delete the zip file after upload
+        fs.unlinkSync(filePath); // Delete the bak file after upload
+      }
+    }
+    // Send email notification after all files are uploaded
+    if (uploadedFiles.length > 0) {
+      sendEmailNotification(uploadedFiles);
+    }
+  });
 }
 
 // Schedule the task to run every 80 minutes
-cron.schedule('*/10 * * * *', () => {
-  if (running) {
+cron.schedule('* * * * *', () => {
+  if (uploadedFiles.length > 0) {
     console.log('Files have already been uploaded. Skipping upload.');
     return;
   }
