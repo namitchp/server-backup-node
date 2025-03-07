@@ -12,7 +12,6 @@ const dotenv = require('dotenv');
 const nodemailer = require('nodemailer');
 const archiver = require('archiver');
 dotenv.config();
-
 // Create an HTTP server
 const server = http.createServer((req, res) => {
   // Set the response header
@@ -25,7 +24,6 @@ const server = http.createServer((req, res) => {
     res.end('File upload endpoint');
   }
 });
-
 const s3Client = new S3Client({
   region: 'ap-south-1',
   credentials: {
@@ -33,7 +31,6 @@ const s3Client = new S3Client({
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
   },
 });
-
 // Configure nodemailer
 const transporter = nodemailer.createTransport({
   service: 'gmail',
@@ -42,29 +39,39 @@ const transporter = nodemailer.createTransport({
     pass: process.env.EMAIL_PASS,
   },
 });
-
+let uploadedFiles = []; // List to store uploaded file names globally
 // Function to send email notification
-function sendEmailNotification(fileName) {
+function sendEmailNotification() {
   const currentDateTime = new Date().toLocaleString();
   const mailOptions = {
     from: process.env.EMAIL_USER,
     to: process.env.NOTIFICATION_EMAIL,
     cc: process.env.CCEMAIL_USER,
-    subject: `Backup File Uploaded - ${currentDateTime}`,
+    subject: `Backup Files Uploaded - ${currentDateTime}`,
     html: `
       <div style="font-family: Arial, sans-serif; color: #333;">
-        <h1 style="color: #4CAF50;">Backup File Uploaded</h1>
-        <p>The following backup file has been successfully uploaded to S3:</p>
+        <h1 style="color: #4CAF50;">Backup Files Uploaded</h1>
+        <p>The following backup files have been successfully uploaded to S3 in the last 8 hours:</p>
         <table style="border-collapse: collapse; width: 100%;">
           <thead>
             <tr style="background-color: #f2f2f2;">
+              <th style="border: 1px solid #ddd; padding: 8px;">#</th>
               <th style="border: 1px solid #ddd; padding: 8px;">File Name</th>
             </tr>
           </thead>
           <tbody>
-            <tr>
-              <td style="border: 1px solid #ddd; padding: 8px;">${fileName}</td>
-            </tr>
+            ${uploadedFiles
+              .map(
+                (fileName, index) => `
+              <tr>
+                <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${
+                  index + 1
+                }</td>
+                <td style="border: 1px solid #ddd; padding: 8px;">${fileName}</td>
+              </tr>
+            `
+              )
+              .join('')}
           </tbody>
         </table>
         <p style="margin-top: 20px;">Best regards,<br>Your Backup Service</p>
@@ -77,9 +84,10 @@ function sendEmailNotification(fileName) {
       return console.error(`Error sending email: ${error.message}`);
     }
     console.log(`Email sent: ${info.response}`);
-    running = false;
+    uploadedFiles = []; // Clear the uploadedFiles array after sending the email
   });
 }
+
 let running = false;
 // Function to upload a file to S3 using multipart upload
 async function uploadFile(filePath) {
@@ -174,8 +182,8 @@ function createDirectoryZip(directoryPath, zipFilePath) {
 async function uploadFilesInDirectory() {
   running = true;
   const currentHour = new Date().getHours();
-  // const directoryPath = path.join(__dirname, '../Database Backup');
-  const directoryPath = path.join(__dirname, '../../db/sql/data');
+  const directoryPath = path.join(__dirname, '../Database Backup');
+  // const directoryPath = path.join(__dirname, '../../db/sql/data');
   const zipFilePath = path.join(directoryPath, `../backup_${currentHour}.zip`);
 
   // Check if the directory has files
@@ -204,12 +212,21 @@ async function uploadFilesInDirectory() {
   }
   console.log(`All files in the directory deleted: ${directoryPath}`);
 
-  // Send email notification after the file is uploaded
-  sendEmailNotification(path.basename(zipFilePath));
+  uploadedFiles.push(path.basename(zipFilePath)); // Add file name to the list
+  running = false;
+  if (
+    currentHour === 8 ||
+    currentHour === 13 ||
+    currentHour === 17 ||
+    currentHour === 20 ||
+    currentHour === 23
+  ) {
+    sendEmailNotification();
+  }
 }
 
 // Schedule the task to run every 80 minutes
-cron.schedule('* * * * *', () => {
+cron.schedule('*/10 * * * *', () => {
   if (running) {
     console.log('Files have already been uploaded. Skipping upload.');
     return;
