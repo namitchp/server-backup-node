@@ -11,6 +11,7 @@ const cron = require('node-cron');
 const dotenv = require('dotenv');
 const nodemailer = require('nodemailer');
 const archiver = require('archiver');
+const currentHour = new Date().getHours();
 dotenv.config();
 // Create an HTTP server
 const server = http.createServer((req, res) => {
@@ -93,6 +94,8 @@ let running = false;
 async function uploadFile(filePath) {
   const fileStream = fs.createReadStream(filePath);
   const fileName = path.basename(filePath);
+  // const fileName = `backup_${currentHour}`;
+  
   console.log(`Uploading file: ${fileName}`);
   const uploadId = await createMultipartUpload(fileName);
   const partSize = 5 * 1024 * 1024; // 5MB minimum part size
@@ -163,12 +166,10 @@ function createDirectoryZip(directoryPath, zipFilePath) {
     const archive = archiver('zip', {
       zlib: { level: 9 },
     });
-
     output.on('close', () => {
       console.log(`Zip file created: ${zipFilePath}`);
       resolve();
     });
-
     archive.on('error', (err) => {
       reject(err);
     });
@@ -181,12 +182,15 @@ function createDirectoryZip(directoryPath, zipFilePath) {
 // Function to upload all files in the current directory
 async function uploadFilesInDirectory() {
   running = true;
-  const currentHour = new Date().getHours();
-  const directoryPath = path.join(__dirname, '../Database Backup');
-  // const directoryPath = path.join(__dirname, '../../db/sql/data');
-  const zipFilePath = path.join(directoryPath, `../backup_${currentHour}.zip`);
+  const directoryPath = path.join(__dirname, 'namit');
 
-  // Check if the directory has files
+  // Check if directoryPath is a valid directory
+  if (!fs.existsSync(directoryPath) || !fs.lstatSync(directoryPath).isDirectory()) {
+    console.error(`Error: ${directoryPath} is not a valid directory.`);
+    running = false;
+    return;
+  }
+
   const files = fs.readdirSync(directoryPath);
   if (files.length === 0) {
     console.log('No files to upload. Skipping upload.');
@@ -194,39 +198,47 @@ async function uploadFilesInDirectory() {
     return;
   }
 
-  // Check if the zip file already exists and delete it
-  if (fs.existsSync(zipFilePath)) {
-    fs.unlinkSync(zipFilePath);
-  }
-
-  await createDirectoryZip(directoryPath, zipFilePath);
-  await uploadFile(zipFilePath);
-  fs.unlinkSync(zipFilePath); // Delete the zip file after upload
-
-  // Delete all files in the current directory
   for (const file of files) {
     const filePath = path.join(directoryPath, file);
-    if (fs.lstatSync(filePath).isFile()) {
+
+    // Skip if the current path is not a file
+    if (!fs.lstatSync(filePath).isFile()) {
+      console.log(`Skipping non-file: ${filePath}`);
+      continue;
+    }
+
+    const fileExtension = path.extname(file).toLowerCase();
+    const zipFilePath = path.join(directoryPath, `${path.basename(file, fileExtension)}.zip`);
+
+    try {
+      // Create a zip for the file
+      await createDirectoryZip(filePath, zipFilePath);
+
+      // Upload the zip file to S3
+      await uploadFile(zipFilePath);
+
+      // Delete the zip file after upload
+      fs.unlinkSync(zipFilePath);
+
+      // Delete the original file
       fs.unlinkSync(filePath);
+
+      console.log(`Processed and deleted file: ${file}`);
+      uploadedFiles.push(path.basename(zipFilePath)); // Add zip file name to the list
+    } catch (error) {
+      console.error(`Error processing file ${file}: ${error.message}`);
     }
   }
-  console.log(`All files in the directory deleted: ${directoryPath}`);
 
-  uploadedFiles.push(path.basename(zipFilePath)); // Add file name to the list
+  console.log(`All files in the directory processed: ${directoryPath}`);
   running = false;
-  if (
-    currentHour === 8 ||
-    currentHour === 13 ||
-    currentHour === 17 ||
-    currentHour === 20 ||
-    currentHour === 23
-  ) {
-    sendEmailNotification();
-  }
+
+  // Send email notification after processing all files
+  sendEmailNotification();
 }
 
 // Schedule the task to run every 80 minutes
-cron.schedule('*/10 * * * *', () => {
+cron.schedule('32 12 * * *', () => {
   if (running) {
     console.log('Files have already been uploaded. Skipping upload.');
     return;
